@@ -959,20 +959,12 @@ def main():
             "04_restore_all_fonts.bat",
             "05_restore_msgothic_only.bat",
         ]
-        bats = [
-            "02_replace_fonts.bat",
-            "03_clear_font_cache.bat",
-            "04_restore_all_fonts.bat",
-            "05_restore_msgothic_only.bat",
-        ]
         for b in bats:
             src_b = os.path.join(base_dir, b)
             if os.path.exists(src_b):
                 shutil.copy2(src_b, os.path.join(temp_dir, b))
                 print(f"  Deployed {b} -> C:\\Temp\\{b}")
 
-    print("\n[SUCCESS] All 100% GDI-compatible fonts generated in dist/!")
-    print("          Scripts deployed to C:\\Temp for easy WinRE execution.")
     print("\n[SUCCESS] All 100% GDI-compatible fonts generated in C:\\Temp and dist/!")
     print("          Ready for execution via C:\\Temp\\02_replace_fonts.bat in WinRE.")
 
