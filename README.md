@@ -49,9 +49,15 @@ windows-noto-system-fonts/
 ├── 03_clear_font_cache.bat        # フォントキャッシュクリアバッチ
 ├── 04_restore_all_fonts.bat       # 全フォント一括ロールバックバッチ
 ├── 05_restore_msgothic_only.bat   # msgothic.ttc のみ緊急ロールバックバッチ
+├── .pre-commit-config.yaml        # 静的解析 & Gate 1 AIレビュー設定
+├── .ame-review/                   # AME AI Review System 設定・プロンプト
+├── .github/workflows/             # CI / PR レビュー ワークフロー
+├── Noto_Sans_JP.zip               # 【要配置】Google Fonts原本ZIP（※Git除外）
+├── Noto_Sans.zip                  # 【要配置】Google Fonts原本ZIP（※Git除外）
+├── Noto_Sans_Mono.zip             # 【要配置】Google Fonts原本ZIP（※Git除外）
 ├── dist/                          # 生成された全フォントファイル（※生成物・Git除外）
-├── docs/                          # 技術資料（Note.md, 手順書_TTX_FontTools.md）
 └── extracted_noto_fonts/          # 原本フォントデータ（※Google公式より取得・Git除外）
+└── extracted_noto_fonts/          # 自動展開フォントデータ（※Git除外）
 ```
 
 > **※スクリプトの配置について**:
@@ -60,6 +66,21 @@ windows-noto-system-fonts/
 ---
 
 ## 🛠️ 作業手順
+
+### ステップ 0: 原本フォント（Google Fonts）のダウンロードと配置
+
+ライセンス保護およびリポジトリ容量節約のため、フォントバイナリは同梱していません。
+初回実行前に、Google Fonts 公式サイトから以下の **3 つのフォントファミリー（ZIP）** をダウンロードし、**プロジェクトのルートディレクトリにそのまま配置** してください：
+
+| フォントファミリー | ダウンロードURL | 配置するZIPファイル名 |
+| :--- | :--- | :--- |
+| **Noto Sans JP** | [Google Fonts: Noto Sans JP](https://fonts.google.com/specimen/Noto+Sans+JP) | `Noto_Sans_JP.zip` |
+| **Noto Sans** | [Google Fonts: Noto Sans](https://fonts.google.com/specimen/Noto+Sans) | `Noto_Sans.zip` |
+| **Noto Sans Mono** | [Google Fonts: Noto Sans Mono](https://fonts.google.com/specimen/Noto+Sans+Mono) | `Noto_Sans_Mono.zip` |
+
+> [!TIP]
+> 各ページの右上にある **「Download family」** ボタンから ZIP ファイルを取得できます。
+> **手動で解凍する必要はありません。** ZIP ファイルをプロジェクトルートに置いておけば、次のステップ 1 でスクリプトが自動的に検出・展開します。
 
 ### ステップ 1: フォント生成 ＆ スクリプト配置
 
