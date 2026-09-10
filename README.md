@@ -4,7 +4,7 @@ Windows 11 / 10 の主要なシステムフォント（日本語・英語・等�
 
 > [!CAUTION]
 >
-> ### ⚠️ 【重要】免責事項・システムフォント変更に伴うリスクについて
+> ## ⚠️ 【重要】免責事項・システムフォント変更に伴うリスクについて
 >
 > 本ツールは Windows のシステムフォント（`C:\Windows\Fonts`）を直接書き換えます。システムの根幹に関わる領域を変更するため、**必ず以下のリスクを理解した上で、自己責任（At Your Own Risk）にてご使用ください**。
 >
@@ -39,11 +39,12 @@ Windows 11 / 10 の主要なシステムフォント（日本語・英語・等�
 
 ## 📁 構成と役割
 
-```
+```text
 windows-noto-system-fonts/
 ├── README.md                      # 本マニュアル
 ├── LICENSE                        # ライセンス（MIT License）
 ├── GEMINI.md                      # エージェント規則
+├── pyproject.toml                 # プロジェクト設定・依存関係定義 (uv/ruff/mypy/pyright)
 ├── 01_build_fonts.py              # 完全互換フォント生成 兼 スクリプトデプロイ
 ├── 02_replace_fonts.bat           # システムフォント置き換えバッチ
 ├── 03_clear_font_cache.bat        # フォントキャッシュクリアバッチ
@@ -56,12 +57,31 @@ windows-noto-system-fonts/
 ├── Noto_Sans.zip                  # 【要配置】Google Fonts原本ZIP（※Git除外）
 ├── Noto_Sans_Mono.zip             # 【要配置】Google Fonts原本ZIP（※Git除外）
 ├── dist/                          # 生成された全フォントファイル（※生成物・Git除外）
-└── extracted_noto_fonts/          # 原本フォントデータ（※Google公式より取得・Git除外）
 └── extracted_noto_fonts/          # 自動展開フォントデータ（※Git除外）
 ```
 
-> **※スクリプトの配置について**:
-> `01_build_fonts.py` を実行すると、生成されたフォントは `dist/` に格納され、回復環境で実行しやすいようバッチスクリプト群（`02_` 〜 `05_`）が **`C:\Temp` に自動デプロイ** されます。
+> **※スクリプト・フォントの配置について**:
+> `01_build_fonts.py` を実行すると、生成されたフォントはすべて `dist/` に出力されます。また、回復環境（WinRE）で実行しやすいよう、`C:\Temp` が存在する場合はフォントバイナリおよびバッチスクリプト群（`02_` 〜 `05_`）が **`C:\Temp` に自動デプロイ・同期** されます。
+
+---
+
+## 🛠️ 前提条件
+
+本ツールの実行には、高速な Python パッケージマネージャー **[uv](https://docs.astral.sh/uv/) が必須** です。事前にインストールしてください：
+
+```powershell
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# または winget
+winget install --id=astral-sh.uv
+```
+
+プロジェクトの依存関係の初期化：
+
+```powershell
+uv sync
+```
 
 ---
 
@@ -86,8 +106,8 @@ windows-noto-system-fonts/
 
 PowerShell またはコマンドプロンプトで以下を実行します：
 
-```cmd
-python 01_build_fonts.py
+```powershell
+uv run 01_build_fonts.py
 ```
 
 > `dist/` にフォントが生成され、`C:\Temp` に実行用バッチファイル（`02_replace_fonts.bat` 等）が配置されます。

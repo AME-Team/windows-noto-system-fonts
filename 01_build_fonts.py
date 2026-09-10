@@ -1,23 +1,41 @@
 # -*- coding: utf-8 -*-
 import os
-import sys
 import shutil
+import sys
 import zipfile
-from fontTools.ttLib import TTFont, TTCollection
+
+from fontTools.ttLib import TTCollection, TTFont
 
 
 def configure_font_metadata(
-    base_font_path,
-    names_dict,
-    version="Version 5.32",
-    codepage1=0x4002009F,
-    codepage2=0xDFD70000,
-    family_class=2049,
-    panose=None,
-    vendor_id=b"RICO",
-    is_fixed_pitch=0,
-    head_flags=0x001B,
-):
+    base_font_path: str,
+    names_dict: dict[int, dict[tuple[int, int, int], str]],
+    version: str = "Version 5.32",
+    codepage1: int = 0x4002009F,
+    codepage2: int = 0xDFD70000,
+    family_class: int = 2049,
+    panose: dict[str, int] | None = None,
+    vendor_id: bytes = b"RICO",
+    is_fixed_pitch: int = 0,
+    head_flags: int = 0x001B,
+) -> TTFont:
+    """Windows システムフォントとの完全 GDI 互換性を確保するためのフォントメタデータを設定する。
+
+    Args:
+        base_font_path: 元となる Noto フォントのファイルパス (.ttf)
+        names_dict: Name テーブルに設定する名前辞書 {nameID: {(platID, encID, langID): name}}
+        version: フォントバージョン文字列 (NameID 5)
+        codepage1: OS/2 ulCodePageRange1 (CP932/Shift_JIS 等のコードページ指定)
+        codepage2: OS/2 ulCodePageRange2
+        family_class: OS/2 sFamilyClass (GDI 互換のファミリークラス)
+        panose: OS/2 Panose テーブル属性の辞書
+        vendor_id: OS/2 achVendID (ベンダー識別子)
+        is_fixed_pitch: post isFixedPitch (等幅フォントフラグ)
+        head_flags: head flags フラグ値
+
+    Returns:
+        メタデータ調整済みの TTFont オブジェクト
+    """
     font = TTFont(base_font_path)
 
     # 1. Clean and set Name Table
@@ -77,9 +95,7 @@ def ensure_extracted_fonts(base_dir):
     font_zips = {
         "Noto_Sans_JP": {
             "zip_names": ["Noto_Sans_JP.zip", "NotoSansJP.zip"],
-            "check_file": os.path.join(
-                "Noto_Sans_JP", "static", "NotoSansJP-Regular.ttf"
-            ),
+            "check_file": os.path.join("Noto_Sans_JP", "static", "NotoSansJP-Regular.ttf"),
             "url": "https://fonts.google.com/specimen/Noto+Sans+JP",
         },
         "Noto_Sans": {
@@ -89,9 +105,7 @@ def ensure_extracted_fonts(base_dir):
         },
         "Noto_Sans_Mono": {
             "zip_names": ["Noto_Sans_Mono.zip", "NotoSansMono.zip"],
-            "check_file": os.path.join(
-                "Noto_Sans_Mono", "static", "NotoSansMono-Regular.ttf"
-            ),
+            "check_file": os.path.join("Noto_Sans_Mono", "static", "NotoSansMono-Regular.ttf"),
             "url": "https://fonts.google.com/specimen/Noto+Sans+Mono",
         },
     }
@@ -119,9 +133,7 @@ def ensure_extracted_fonts(base_dir):
         if found_zip:
             target_extract = os.path.join(extracted_dir, font_key)
             os.makedirs(target_extract, exist_ok=True)
-            print(
-                f"    - {os.path.basename(found_zip)} を {target_extract} に自動展開中..."
-            )
+            print(f"    - {os.path.basename(found_zip)} を {target_extract} に自動展開中...")
             with zipfile.ZipFile(found_zip, "r") as zf:
                 zf.extractall(target_extract)
         else:
@@ -140,21 +152,32 @@ def ensure_extracted_fonts(base_dir):
         sys.exit(1)
 
 
+def check_uv_environment():
+    """Verify that script is executed under an active virtual environment or uv."""
+    in_venv = (sys.prefix != getattr(sys, "base_prefix", sys.prefix)) or bool(
+        os.environ.get("VIRTUAL_ENV")
+    )
+    if not in_venv:
+        print("\n" + "=" * 65)
+        print("【注意】本スクリプトの実行には uv が必須です。")
+        print("依存関係の整合性を保つため、以下のコマンドで実行してください：\n")
+        print("    uv run 01_build_fonts.py")
+        print("=" * 65 + "\n")
+        sys.exit(1)
+
+
 def main():
+    check_uv_environment()
     base_dir = os.path.dirname(os.path.abspath(__file__))
     ensure_extracted_fonts(base_dir)
 
     noto_jp = os.path.join(base_dir, "extracted_noto_fonts", "Noto_Sans_JP", "static")
     noto_en = os.path.join(base_dir, "extracted_noto_fonts", "Noto_Sans", "static")
-    noto_mono = os.path.join(
-        base_dir, "extracted_noto_fonts", "Noto_Sans_Mono", "static"
-    )
+    noto_mono = os.path.join(base_dir, "extracted_noto_fonts", "Noto_Sans_Mono", "static")
 
-    out_dir = os.path.join(base_dir, "dist")
-    out_dir = r"C:\Temp"
-    os.makedirs(out_dir, exist_ok=True)
     dist_dir = os.path.join(base_dir, "dist")
     os.makedirs(dist_dir, exist_ok=True)
+    out_dir = dist_dir
 
     print("==================================================")
     print(" Building 100% GDI-Compatible Windows System Fonts")
@@ -580,9 +603,7 @@ def main():
             "YuGothic-Medium",
             "Regular",
         ),
-        make_yg(
-            jp_reg, "Yu Gothic UI", "Yu Gothic UI", "YuGothicUI-Regular", "Regular"
-        ),
+        make_yg(jp_reg, "Yu Gothic UI", "Yu Gothic UI", "YuGothicUI-Regular", "Regular"),
     ]
     ttc_ygm.save(os.path.join(out_dir, "YuGothM.ttc"))
 
@@ -943,22 +964,13 @@ def main():
         )
         f.save(os.path.join(out_dir, fname))
 
-    # 8. Sync execution bat scripts to C:\Temp
-    # 8. Sync to dist directory
-    for f in os.listdir(out_dir):
-        if f.endswith(".ttf") or f.endswith(".ttc"):
-            shutil.copy2(os.path.join(out_dir, f), os.path.join(dist_dir, f))
-
-    # 9. Sync bat scripts to C:\Temp
+    # 8. Sync generated fonts and bat scripts to C:\Temp if present
     temp_dir = r"C:\Temp"
     if os.path.exists(temp_dir):
-        print("\n[8/8] Syncing execution bat scripts to C:\\Temp...")
-        bats = [
-            "02_replace_fonts.bat",
-            "03_clear_font_cache.bat",
-            "04_restore_all_fonts.bat",
-            "05_restore_msgothic_only.bat",
-        ]
+        print("\n[8/8] Syncing fonts and execution bat scripts to C:\\Temp...")
+        for f in os.listdir(dist_dir):
+            if f.endswith(".ttf") or f.endswith(".ttc"):
+                shutil.copy2(os.path.join(dist_dir, f), os.path.join(temp_dir, f))
         bats = [
             "02_replace_fonts.bat",
             "03_clear_font_cache.bat",
@@ -972,8 +984,8 @@ def main():
                 print(f"  Deployed {b} -> C:\\Temp\\{b}")
 
     print("\n[SUCCESS] All 100% GDI-compatible fonts generated in dist/!")
-    print("          Scripts deployed to C:\\Temp for easy WinRE execution.")
-    print("\n[SUCCESS] All 100% GDI-compatible fonts generated in C:\\Temp and dist/!")
+    if os.path.exists(temp_dir):
+        print("          Synced to C:\\Temp for easy WinRE execution.")
     print("          Ready for execution via C:\\Temp\\02_replace_fonts.bat in WinRE.")
 
 
