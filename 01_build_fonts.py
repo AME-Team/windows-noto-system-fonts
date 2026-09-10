@@ -2,6 +2,7 @@
 import os
 import sys
 import shutil
+import zipfile
 from fontTools.ttLib import TTFont, TTCollection
 
 
@@ -66,8 +67,83 @@ def configure_font_metadata(
     return font
 
 
+def ensure_extracted_fonts(base_dir):
+    """Check if extracted_noto_fonts contains required fonts.
+    If missing, automatically extract from ZIP files placed in base_dir.
+    If ZIP files are also missing, display an informative error and exit.
+    """
+    extracted_dir = os.path.join(base_dir, "extracted_noto_fonts")
+
+    font_zips = {
+        "Noto_Sans_JP": {
+            "zip_names": ["Noto_Sans_JP.zip", "NotoSansJP.zip"],
+            "check_file": os.path.join(
+                "Noto_Sans_JP", "static", "NotoSansJP-Regular.ttf"
+            ),
+            "url": "https://fonts.google.com/specimen/Noto+Sans+JP",
+        },
+        "Noto_Sans": {
+            "zip_names": ["Noto_Sans.zip", "NotoSans.zip"],
+            "check_file": os.path.join("Noto_Sans", "static", "NotoSans-Regular.ttf"),
+            "url": "https://fonts.google.com/specimen/Noto+Sans",
+        },
+        "Noto_Sans_Mono": {
+            "zip_names": ["Noto_Sans_Mono.zip", "NotoSansMono.zip"],
+            "check_file": os.path.join(
+                "Noto_Sans_Mono", "static", "NotoSansMono-Regular.ttf"
+            ),
+            "url": "https://fonts.google.com/specimen/Noto+Sans+Mono",
+        },
+    }
+
+    missing_fonts = []
+    for font_key, info in font_zips.items():
+        check_path = os.path.join(extracted_dir, info["check_file"])
+        if not os.path.exists(check_path):
+            missing_fonts.append(font_key)
+
+    if not missing_fonts:
+        return
+
+    print("[*] 原本フォントの存在を確認・展開中...")
+    missing_zips = []
+    for font_key in missing_fonts:
+        info = font_zips[font_key]
+        found_zip = None
+        for zname in info["zip_names"]:
+            candidate = os.path.join(base_dir, zname)
+            if os.path.exists(candidate):
+                found_zip = candidate
+                break
+
+        if found_zip:
+            target_extract = os.path.join(extracted_dir, font_key)
+            os.makedirs(target_extract, exist_ok=True)
+            print(
+                f"    - {os.path.basename(found_zip)} を {target_extract} に自動展開中..."
+            )
+            with zipfile.ZipFile(found_zip, "r") as zf:
+                zf.extractall(target_extract)
+        else:
+            missing_zips.append((font_key, info["zip_names"][0], info["url"]))
+
+    if missing_zips:
+        print("\n" + "=" * 65)
+        print("【エラー】原本フォント（Google Fonts）が見つかりません。")
+        print("以下のURLからフォントファミリー（ZIP）をダウンロードし、")
+        print(f"プロジェクトのルートディレクトリ ({base_dir}) に配置してください。\n")
+        for font_key, zip_name, url in missing_zips:
+            print(f"  - {font_key}:")
+            print(f"      配置ファイル名: {zip_name}")
+            print(f"      ダウンロードURL: {url}")
+        print("=" * 65 + "\n")
+        sys.exit(1)
+
+
 def main():
     base_dir = os.path.dirname(os.path.abspath(__file__))
+    ensure_extracted_fonts(base_dir)
+
     noto_jp = os.path.join(base_dir, "extracted_noto_fonts", "Noto_Sans_JP", "static")
     noto_en = os.path.join(base_dir, "extracted_noto_fonts", "Noto_Sans", "static")
     noto_mono = os.path.join(

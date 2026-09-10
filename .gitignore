@@ -4,6 +4,7 @@ extracted_noto_fonts/
 *.ttf
 *.otf
 *.ttc
+*.zip
 
 # Python cache
 __pycache__/
@@ -22,3 +23,10 @@ $RECYCLE.BIN/
 # Temporary files
 *.tmp
 *.bak
+
+# AME AI Review System user configs and local state
+*.user.json
+.ame-review/*.user.json
+.ame-review/state.json
+.ame-review/cache/
+
