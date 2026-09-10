@@ -1,0 +1,39 @@
+[project]
+name = "windows-noto-system-fonts"
+version = "0.1.0"
+description = "Replace Windows system fonts with 100% GDI-compatible Google Noto Sans family"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fonttools>=4.50.0",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.13.0",
+    "ruff>=0.11.0",
+    "pyright>=1.1.390",
+]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+reportMissingTypeStubs = false
+reportAttributeAccessIssue = false
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]

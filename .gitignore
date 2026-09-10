@@ -6,7 +6,8 @@ extracted_noto_fonts/
 *.ttc
 *.zip
 
-# Python cache
+# Python cache & virtualenv
+.venv/
 __pycache__/
 *.py[cod]
 *$py.class

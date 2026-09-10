@@ -1,23 +1,47 @@
 # -*- coding: utf-8 -*-
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "fonttools>=4.50.0",
+# ]
+# ///
 import os
-import sys
 import shutil
+import sys
 import zipfile
-from fontTools.ttLib import TTFont, TTCollection
+
+from fontTools.ttLib import TTCollection, TTFont
 
 
 def configure_font_metadata(
-    base_font_path,
-    names_dict,
-    version="Version 5.32",
-    codepage1=0x4002009F,
-    codepage2=0xDFD70000,
-    family_class=2049,
-    panose=None,
-    vendor_id=b"RICO",
-    is_fixed_pitch=0,
-    head_flags=0x001B,
-):
+    base_font_path: str,
+    names_dict: dict[int, dict[tuple[int, int, int], str]],
+    version: str = "Version 5.32",
+    codepage1: int = 0x4002009F,
+    codepage2: int = 0xDFD70000,
+    family_class: int = 2049,
+    panose: dict[str, int] | None = None,
+    vendor_id: bytes = b"RICO",
+    is_fixed_pitch: int = 0,
+    head_flags: int = 0x001B,
+) -> TTFont:
+    """Windows システムフォントとの完全 GDI 互換性を確保するためのフォントメタデータを設定する。
+
+    Args:
+        base_font_path: 元となる Noto フォントのファイルパス (.ttf)
+        names_dict: Name テーブルに設定する名前辞書 {nameID: {(platID, encID, langID): name}}
+        version: フォントバージョン文字列 (NameID 5)
+        codepage1: OS/2 ulCodePageRange1 (CP932/Shift_JIS 等のコードページ指定)
+        codepage2: OS/2 ulCodePageRange2
+        family_class: OS/2 sFamilyClass (GDI 互換のファミリークラス)
+        panose: OS/2 Panose テーブル属性の辞書
+        vendor_id: OS/2 achVendID (ベンダー識別子)
+        is_fixed_pitch: post isFixedPitch (等幅フォントフラグ)
+        head_flags: head flags フラグ値
+
+    Returns:
+        メタデータ調整済みの TTFont オブジェクト
+    """
     font = TTFont(base_font_path)
 
     # 1. Clean and set Name Table
@@ -77,9 +101,7 @@ def ensure_extracted_fonts(base_dir):
     font_zips = {
         "Noto_Sans_JP": {
             "zip_names": ["Noto_Sans_JP.zip", "NotoSansJP.zip"],
-            "check_file": os.path.join(
-                "Noto_Sans_JP", "static", "NotoSansJP-Regular.ttf"
-            ),
+            "check_file": os.path.join("Noto_Sans_JP", "static", "NotoSansJP-Regular.ttf"),
             "url": "https://fonts.google.com/specimen/Noto+Sans+JP",
         },
         "Noto_Sans": {
@@ -89,9 +111,7 @@ def ensure_extracted_fonts(base_dir):
         },
         "Noto_Sans_Mono": {
             "zip_names": ["Noto_Sans_Mono.zip", "NotoSansMono.zip"],
-            "check_file": os.path.join(
-                "Noto_Sans_Mono", "static", "NotoSansMono-Regular.ttf"
-            ),
+            "check_file": os.path.join("Noto_Sans_Mono", "static", "NotoSansMono-Regular.ttf"),
             "url": "https://fonts.google.com/specimen/Noto+Sans+Mono",
         },
     }
@@ -119,9 +139,7 @@ def ensure_extracted_fonts(base_dir):
         if found_zip:
             target_extract = os.path.join(extracted_dir, font_key)
             os.makedirs(target_extract, exist_ok=True)
-            print(
-                f"    - {os.path.basename(found_zip)} を {target_extract} に自動展開中..."
-            )
+            print(f"    - {os.path.basename(found_zip)} を {target_extract} に自動展開中...")
             with zipfile.ZipFile(found_zip, "r") as zf:
                 zf.extractall(target_extract)
         else:
@@ -140,15 +158,29 @@ def ensure_extracted_fonts(base_dir):
         sys.exit(1)
 
 
+def check_uv_environment():
+    """Verify that script is executed under uv or an active virtual environment."""
+    in_venv = (sys.prefix != getattr(sys, "base_prefix", sys.prefix)) or bool(
+        os.environ.get("VIRTUAL_ENV")
+    )
+    under_uv = bool(os.environ.get("UV")) or bool(os.environ.get("UV_INTERNAL__PARENT_INTERPRETER"))
+    if not in_venv and not under_uv:
+        print("\n" + "=" * 65)
+        print("【注意】本スクリプトの実行には uv が必須です。")
+        print("依存関係の整合性を保つため、以下のコマンドで実行してください：\n")
+        print("    uv run 01_build_fonts.py")
+        print("=" * 65 + "\n")
+        sys.exit(1)
+
+
 def main():
+    check_uv_environment()
     base_dir = os.path.dirname(os.path.abspath(__file__))
     ensure_extracted_fonts(base_dir)
 
     noto_jp = os.path.join(base_dir, "extracted_noto_fonts", "Noto_Sans_JP", "static")
     noto_en = os.path.join(base_dir, "extracted_noto_fonts", "Noto_Sans", "static")
-    noto_mono = os.path.join(
-        base_dir, "extracted_noto_fonts", "Noto_Sans_Mono", "static"
-    )
+    noto_mono = os.path.join(base_dir, "extracted_noto_fonts", "Noto_Sans_Mono", "static")
 
     out_dir = os.path.join(base_dir, "dist")
     out_dir = r"C:\Temp"
@@ -580,9 +612,7 @@ def main():
             "YuGothic-Medium",
             "Regular",
         ),
-        make_yg(
-            jp_reg, "Yu Gothic UI", "Yu Gothic UI", "YuGothicUI-Regular", "Regular"
-        ),
+        make_yg(jp_reg, "Yu Gothic UI", "Yu Gothic UI", "YuGothicUI-Regular", "Regular"),
     ]
     ttc_ygm.save(os.path.join(out_dir, "YuGothM.ttc"))
 
