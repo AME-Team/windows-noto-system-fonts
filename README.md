@@ -78,6 +78,7 @@ winget install --id=astral-sh.uv
 ```
 
 プロジェクトの依存関係の初期化：
+
 ```powershell
 uv sync
 ```
