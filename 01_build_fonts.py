@@ -1,10 +1,4 @@
 # -*- coding: utf-8 -*-
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#     "fonttools>=4.50.0",
-# ]
-# ///
 import os
 import shutil
 import sys
@@ -159,12 +153,11 @@ def ensure_extracted_fonts(base_dir):
 
 
 def check_uv_environment():
-    """Verify that script is executed under uv or an active virtual environment."""
+    """Verify that script is executed under an active virtual environment or uv."""
     in_venv = (sys.prefix != getattr(sys, "base_prefix", sys.prefix)) or bool(
         os.environ.get("VIRTUAL_ENV")
     )
-    under_uv = bool(os.environ.get("UV")) or bool(os.environ.get("UV_INTERNAL__PARENT_INTERPRETER"))
-    if not in_venv and not under_uv:
+    if not in_venv:
         print("\n" + "=" * 65)
         print("【注意】本スクリプトの実行には uv が必須です。")
         print("依存関係の整合性を保つため、以下のコマンドで実行してください：\n")
@@ -182,11 +175,9 @@ def main():
     noto_en = os.path.join(base_dir, "extracted_noto_fonts", "Noto_Sans", "static")
     noto_mono = os.path.join(base_dir, "extracted_noto_fonts", "Noto_Sans_Mono", "static")
 
-    out_dir = os.path.join(base_dir, "dist")
-    out_dir = r"C:\Temp"
-    os.makedirs(out_dir, exist_ok=True)
     dist_dir = os.path.join(base_dir, "dist")
     os.makedirs(dist_dir, exist_ok=True)
+    out_dir = dist_dir
 
     print("==================================================")
     print(" Building 100% GDI-Compatible Windows System Fonts")
@@ -973,16 +964,13 @@ def main():
         )
         f.save(os.path.join(out_dir, fname))
 
-    # 8. Sync execution bat scripts to C:\Temp
-    # 8. Sync to dist directory
-    for f in os.listdir(out_dir):
-        if f.endswith(".ttf") or f.endswith(".ttc"):
-            shutil.copy2(os.path.join(out_dir, f), os.path.join(dist_dir, f))
-
-    # 9. Sync bat scripts to C:\Temp
+    # 8. Sync generated fonts and bat scripts to C:\Temp if present
     temp_dir = r"C:\Temp"
     if os.path.exists(temp_dir):
-        print("\n[8/8] Syncing execution bat scripts to C:\\Temp...")
+        print("\n[8/8] Syncing fonts and execution bat scripts to C:\\Temp...")
+        for f in os.listdir(dist_dir):
+            if f.endswith(".ttf") or f.endswith(".ttc"):
+                shutil.copy2(os.path.join(dist_dir, f), os.path.join(temp_dir, f))
         bats = [
             "02_replace_fonts.bat",
             "03_clear_font_cache.bat",
@@ -995,7 +983,9 @@ def main():
                 shutil.copy2(src_b, os.path.join(temp_dir, b))
                 print(f"  Deployed {b} -> C:\\Temp\\{b}")
 
-    print("\n[SUCCESS] All 100% GDI-compatible fonts generated in C:\\Temp and dist/!")
+    print("\n[SUCCESS] All 100% GDI-compatible fonts generated in dist/!")
+    if os.path.exists(temp_dir):
+        print("          Synced to C:\\Temp for easy WinRE execution.")
     print("          Ready for execution via C:\\Temp\\02_replace_fonts.bat in WinRE.")
 
 
