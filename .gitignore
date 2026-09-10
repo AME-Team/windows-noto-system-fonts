@@ -1,0 +1,24 @@
+# Generated font files and extracted fonts (DO NOT commit binaries / font files)
+dist/
+extracted_noto_fonts/
+*.ttf
+*.otf
+*.ttc
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.mypy_cache/
+.pytest_cache/
+
+# OS specific
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# Temporary files
+*.tmp
+*.bak
