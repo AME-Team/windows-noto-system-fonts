@@ -66,7 +66,7 @@ repos:
         entry: python -m ame_ai_review_system.skip_guard
         language: python
         additional_dependencies:
-          - ame_ai_review_system @ https://github.com/AME-Team/AME-AI-Review-System/releases/download/v0.2.13/ame_ai_review_system-0.2.13-py3-none-any.whl#sha256=cd4dfb1d66439182528afa3faf3984d4ab43ab4b62173f1c2a3b151516519fae
+          - ame_ai_review_system @ https://github.com/AME-Team/AME-AI-Review-System/releases/download/v0.2.16/ame_ai_review_system-0.2.16-py3-none-any.whl#sha256=76b05b56d6b10d68601b5e9aa20689079b26bdcc7149ab39ab4b63909c8a2c00
           - google-antigravity
         pass_filenames: false
         always_run: true
@@ -77,7 +77,7 @@ repos:
         entry: python -m ame_ai_review_system.precommit_review
         language: python
         additional_dependencies:
-          - ame_ai_review_system @ https://github.com/AME-Team/AME-AI-Review-System/releases/download/v0.2.13/ame_ai_review_system-0.2.13-py3-none-any.whl#sha256=cd4dfb1d66439182528afa3faf3984d4ab43ab4b62173f1c2a3b151516519fae
+          - ame_ai_review_system @ https://github.com/AME-Team/AME-AI-Review-System/releases/download/v0.2.16/ame_ai_review_system-0.2.16-py3-none-any.whl#sha256=76b05b56d6b10d68601b5e9aa20689079b26bdcc7149ab39ab4b63909c8a2c00
           - google-antigravity
         pass_filenames: false
         always_run: true
@@ -88,7 +88,7 @@ repos:
         entry: python -m ame_ai_review_system.post_commit_reset
         language: python
         additional_dependencies:
-          - ame_ai_review_system @ https://github.com/AME-Team/AME-AI-Review-System/releases/download/v0.2.13/ame_ai_review_system-0.2.13-py3-none-any.whl#sha256=cd4dfb1d66439182528afa3faf3984d4ab43ab4b62173f1c2a3b151516519fae
+          - ame_ai_review_system @ https://github.com/AME-Team/AME-AI-Review-System/releases/download/v0.2.16/ame_ai_review_system-0.2.16-py3-none-any.whl#sha256=76b05b56d6b10d68601b5e9aa20689079b26bdcc7149ab39ab4b63909c8a2c00
           - google-antigravity
         pass_filenames: false
         always_run: true
