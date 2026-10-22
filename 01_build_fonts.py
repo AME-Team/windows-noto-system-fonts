@@ -3,8 +3,156 @@ import os
 import shutil
 import sys
 import zipfile
+from contextlib import closing
 
 from fontTools.ttLib import TTCollection, TTFont
+
+#: 本文の表示を壊す GSUB 機能タグ。
+#: Noto Sans JP は 'dlig' (Discretionary Ligatures) にカタカナ・単位の組文字を定義しており、
+#: 「グラム」→「㌘」、「株式会社」→「㈱」のように語の一部が 1 文字へ潰れる。Windows の
+#: フォントエンジンが 'dlig' を適用する画面では「更新プログラム」が「更新プロ㌘」になる
+#: (Issue #3)。置き換え対象の MS 系システムフォントは 'dlig' を持たないため、互換性の
+#: 観点でも削除する。'liga' は fi/fl など語を壊さない合字のみなので残す。
+UNWANTED_GSUB_FEATURES = ("dlig",)
+
+
+def remove_gsub_features(font: TTFont, feature_tags: tuple[str, ...]) -> list[str]:
+    """GSUB から指定タグの機能を削除する。
+
+    機能レコードを削除すると FeatureList の添字が詰まるため、各 LangSys が持つ
+    FeatureIndex / ReqFeatureIndex と、可変フォントの FeatureVariations が持つ
+    FeatureIndex も張り替える。削除した機能だけが参照していた lookup は
+    未参照のまま残す。どの機能からも参照されない lookup はシェーピングで適用されず、
+    LookupList の添字を全張り替えする方が既存の参照を壊すリスクが大きいため。
+
+    Args:
+        font: 対象フォント
+        feature_tags: 削除する GSUB 機能タグ
+
+    Returns:
+        実際に削除した機能タグのリスト (対象が無ければ空)
+    """
+    if "GSUB" not in font:
+        return []
+
+    gsub = font["GSUB"].table
+    feature_list = gsub.FeatureList
+    if feature_list is None or not feature_list.FeatureRecord:
+        return []
+    old_records = feature_list.FeatureRecord
+    keep_indices = [i for i, r in enumerate(old_records) if r.FeatureTag not in feature_tags]
+    removed = sorted({r.FeatureTag for r in old_records if r.FeatureTag in feature_tags})
+    if not removed:
+        return []
+
+    index_map = {old_index: new_index for new_index, old_index in enumerate(keep_indices)}
+    # 件数フィールド (FeatureCount / SubstitutionCount 等) は fontTools なら保存時に配列長から
+    # 書き出されるが、実装差異で古い値が残らないよう明示的にも更新しておく。
+    for script_record in gsub.ScriptList.ScriptRecord:
+        script = script_record.Script
+        lang_sys_list = [] if script.DefaultLangSys is None else [script.DefaultLangSys]
+        lang_sys_list += [record.LangSys for record in script.LangSysRecord]
+        for lang_sys in lang_sys_list:
+            lang_sys.FeatureIndex = [
+                index_map[index] for index in lang_sys.FeatureIndex if index in index_map
+            ]
+            lang_sys.FeatureCount = len(lang_sys.FeatureIndex)
+            if lang_sys.ReqFeatureIndex != 0xFFFF:
+                lang_sys.ReqFeatureIndex = index_map.get(lang_sys.ReqFeatureIndex, 0xFFFF)
+
+    # 可変フォントは条件ごとに機能を差し替える (FeatureVariations)。LangSys と同じく
+    # 機能の添字を持つため、張り替えないと削除後の添字と食い違う。
+    feature_variations = getattr(gsub, "FeatureVariations", None)
+    if feature_variations is not None:
+        kept_variations = []
+        for variation in feature_variations.FeatureVariationRecord:
+            table_substitution = variation.FeatureTableSubstitution
+            kept_substitutions = []
+            for substitution in table_substitution.SubstitutionRecord:
+                if substitution.FeatureIndex not in index_map:
+                    continue
+                substitution.FeatureIndex = index_map[substitution.FeatureIndex]
+                kept_substitutions.append(substitution)
+            # 差し替え先をすべて失った条件は、適用しても何も変わらないため削除する。
+            if not kept_substitutions:
+                continue
+            table_substitution.SubstitutionRecord = kept_substitutions
+            table_substitution.SubstitutionCount = len(kept_substitutions)
+            kept_variations.append(variation)
+        feature_variations.FeatureVariationRecord = kept_variations
+        feature_variations.FeatureVariationCount = len(kept_variations)
+        # 差し替えが 1 件も残らなければ、空の FeatureVariations を書き出さない。
+        if not kept_variations:
+            gsub.FeatureVariations = None
+
+    feature_list.FeatureRecord = [old_records[index] for index in keep_indices]
+    feature_list.FeatureCount = len(feature_list.FeatureRecord)
+
+    remaining = {r.FeatureTag for r in feature_list.FeatureRecord}
+    stale = [tag for tag in feature_tags if tag in remaining]
+    if stale:
+        raise RuntimeError(f"GSUB 機能を削除できませんでした: {stale}")
+    return removed
+
+
+#: この実行で書き出したフォントのパス。ビルド末尾の検証 (Issue #3) の対象にするため、
+#: 保存のたびに記録する。dist/ に残る過去ビルドの生成物や手動配置のファイルを
+#: 検証対象に巻き込まないよう、名前を列挙せず実際に保存したものだけを渡す。
+generated_font_paths: list[str] = []
+
+
+def save_font(font: TTFont | TTCollection, path: str) -> None:
+    """フォントを保存し、検証対象として記録する。
+
+    Args:
+        font: 保存するフォント (TTF) またはフォントコレクション (TTC)
+        path: 出力先パス
+    """
+    font.save(path)
+    generated_font_paths.append(path)
+
+
+def _assert_no_features(fonts: list[TTFont], path: str, feature_tags: tuple[str, ...]) -> int:
+    """フォント群に削除対象の GSUB 機能が残っていないことを確認し、フェイス数を返す。"""
+    for font in fonts:
+        if "GSUB" not in font:
+            continue
+        feature_list = getattr(font["GSUB"].table, "FeatureList", None)
+        if feature_list is None or not feature_list.FeatureRecord:
+            continue
+        tags = {record.FeatureTag for record in feature_list.FeatureRecord}
+        leftover = [tag for tag in feature_tags if tag in tags]
+        if leftover:
+            raise RuntimeError(f"{os.path.basename(path)} に GSUB 機能 {leftover} が残っています")
+    return len(fonts)
+
+
+def verify_no_unwanted_gsub_features(paths: list[str], feature_tags: tuple[str, ...]) -> int:
+    """保存済みの生成物を読み直し、削除対象の GSUB 機能が残っていないことを確認する。
+
+    削除処理が静かに効かなくなると (Noto 側の GSUB 構造の変化や保存時の取りこぼし)、
+    「プロ㌘」が再発する。生成物を検証して、残っていればビルドを失敗させる。
+
+    Args:
+        paths: 検証するフォントファイル (.ttc / .ttf)
+        feature_tags: 残っていてはならない GSUB 機能タグ
+
+    Returns:
+        検証したフェイス数
+    """
+    if not paths:
+        raise RuntimeError("検証対象のフォントが 1 件もありません")
+
+    checked = 0
+    for path in paths:
+        # 生成と後始末を 1 か所にまとめ、読み込み途中で失敗しても開いたままにしない。
+        if path.lower().endswith(".ttc"):
+            with closing(TTCollection(path)) as collection:
+                checked += _assert_no_features(collection.fonts, path, feature_tags)
+        else:
+            with closing(TTFont(path)) as font:
+                checked += _assert_no_features([font], path, feature_tags)
+    return checked
 
 
 def configure_font_metadata(
@@ -78,7 +226,10 @@ def configure_font_metadata(
     if "gasp" in font:
         font["gasp"].gaspRange = {65535: 15}
 
-    # 6. Remove STAT table if present
+    # 6. Remove GSUB features that collapse words into square ligatures (Issue #3)
+    remove_gsub_features(font, UNWANTED_GSUB_FEATURES)
+
+    # 7. Remove STAT table if present
     if "STAT" in font:
         del font["STAT"]
 
@@ -178,6 +329,7 @@ def main():
     dist_dir = os.path.join(base_dir, "dist")
     os.makedirs(dist_dir, exist_ok=True)
     out_dir = dist_dir
+    generated_font_paths.clear()
 
     print("==================================================")
     print(" Building 100% GDI-Compatible Windows System Fonts")
@@ -349,7 +501,7 @@ def main():
     )
     ttc_msg = TTCollection()
     ttc_msg.fonts = [msg_0, msg_1, msg_2]
-    ttc_msg.save(os.path.join(out_dir, "msgothic.ttc"))
+    save_font(ttc_msg, os.path.join(out_dir, "msgothic.ttc"))
 
     # 2. Meiryo & Meiryo UI
     print("[2/8] Generating meiryo.ttc & meiryob.ttc...")
@@ -444,7 +596,7 @@ def main():
     )
     ttc_m = TTCollection()
     ttc_m.fonts = [m_reg, m_ita, m_ui_reg, m_ui_ita]
-    ttc_m.save(os.path.join(out_dir, "meiryo.ttc"))
+    save_font(ttc_m, os.path.join(out_dir, "meiryo.ttc"))
 
     panose_meiryo_bold = dict(panose_meiryo)
     panose_meiryo_bold["bWeight"] = 8
@@ -537,7 +689,7 @@ def main():
     )
     ttc_mb = TTCollection()
     ttc_mb.fonts = [m_bld, m_bld_ita, m_ui_bld, m_ui_bld_ita]
-    ttc_mb.save(os.path.join(out_dir, "meiryob.ttc"))
+    save_font(ttc_mb, os.path.join(out_dir, "meiryob.ttc"))
 
     # 3. Yu Gothic
     print("[3/8] Generating Yu Gothic TTCs...")
@@ -592,7 +744,7 @@ def main():
             "Regular",
         ),
     ]
-    ttc_ygr.save(os.path.join(out_dir, "YuGothR.ttc"))
+    save_font(ttc_ygr, os.path.join(out_dir, "YuGothR.ttc"))
 
     ttc_ygm = TTCollection()
     ttc_ygm.fonts = [
@@ -605,7 +757,7 @@ def main():
         ),
         make_yg(jp_reg, "Yu Gothic UI", "Yu Gothic UI", "YuGothicUI-Regular", "Regular"),
     ]
-    ttc_ygm.save(os.path.join(out_dir, "YuGothM.ttc"))
+    save_font(ttc_ygm, os.path.join(out_dir, "YuGothM.ttc"))
 
     ttc_ygb = TTCollection()
     ttc_ygb.fonts = [
@@ -625,7 +777,7 @@ def main():
             "Regular",
         ),
     ]
-    ttc_ygb.save(os.path.join(out_dir, "YuGothB.ttc"))
+    save_font(ttc_ygb, os.path.join(out_dir, "YuGothB.ttc"))
 
     ttc_ygl = TTCollection()
     ttc_ygl.fonts = [
@@ -644,7 +796,7 @@ def main():
             "Regular",
         ),
     ]
-    ttc_ygl.save(os.path.join(out_dir, "YuGothL.ttc"))
+    save_font(ttc_ygl, os.path.join(out_dir, "YuGothL.ttc"))
 
     # 4. MS Mincho
     print("[4/8] Generating msmincho.ttc...")
@@ -704,7 +856,7 @@ def main():
     )
     ttc_msm = TTCollection()
     ttc_msm.fonts = [msm_0, msm_1]
-    ttc_msm.save(os.path.join(out_dir, "msmincho.ttc"))
+    save_font(ttc_msm, os.path.join(out_dir, "msmincho.ttc"))
 
     # 5. Segoe UI
     print("[5/8] Generating Segoe UI TTFs...")
@@ -775,7 +927,7 @@ def main():
             family_class=2049,
             vendor_id=b"MS  ",
         )
-        f.save(os.path.join(out_dir, fname))
+        save_font(f, os.path.join(out_dir, fname))
 
     # 6. Arial, Calibri, Tahoma, Verdana
     print("[6/8] Generating Arial, Calibri, Tahoma, Verdana TTFs...")
@@ -863,7 +1015,7 @@ def main():
             family_class=2049,
             vendor_id=b"MONO",
         )
-        f.save(os.path.join(out_dir, fname))
+        save_font(f, os.path.join(out_dir, fname))
 
     # 7. Monospace Fonts
     print("[7/8] Generating Monospace TTFs...")
@@ -962,7 +1114,16 @@ def main():
             vendor_id=b"MONO",
             is_fixed_pitch=1,
         )
-        f.save(os.path.join(out_dir, fname))
+        save_font(f, os.path.join(out_dir, fname))
+
+    # 削除した GSUB 機能が生成物に残っていないことを確認する (Issue #3)。
+    # 将来 Noto 側の GSUB が変わって削除が空振りすると「プロ㌘」が再発するため、
+    # 沈黙して成功させず、ここで落とす。C:\Temp へのコピーより前に実行し、
+    # 検証に落ちたフォントが配布先へ流れないようにする。
+    # 対象はこの実行で保存したフォントのみ (save_font が記録したパス)。
+    # dist/ に残る過去ビルドの生成物や手動配置のファイルは対象外になる。
+    checked = verify_no_unwanted_gsub_features(generated_font_paths, UNWANTED_GSUB_FEATURES)
+    print(f"\n[check] GSUB 機能 {list(UNWANTED_GSUB_FEATURES)} を削除済み: {checked} フェイス")
 
     # 8. Sync generated fonts and bat scripts to C:\Temp if present
     temp_dir = r"C:\Temp"
