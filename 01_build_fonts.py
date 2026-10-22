@@ -4,6 +4,7 @@ import shutil
 import sys
 import zipfile
 from contextlib import closing
+from typing import Any, Iterable
 
 from fontTools.ttLib import TTCollection, TTFont
 
@@ -14,6 +15,10 @@ from fontTools.ttLib import TTCollection, TTFont
 #: (Issue #3)。置き換え対象の MS 系システムフォントは 'dlig' を持たないため、互換性の
 #: 観点でも削除する。'liga' は fi/fl など語を壊さない合字のみなので残す。
 UNWANTED_GSUB_FEATURES = ("dlig",)
+
+#: 組文字 (CJK 互換文字 U+3200-U+33FF) のコードポイント範囲。この範囲の文字は
+#: 「グラム」→「㌘」のように語の一部を 1 文字へ潰す合字の置換先になる。
+SQUARE_LIGATURE_RANGES = ((0x3200, 0x33FF),)
 
 
 def remove_gsub_features(font: TTFont, feature_tags: tuple[str, ...]) -> list[str]:
@@ -112,26 +117,154 @@ def save_font(font: TTFont | TTCollection, path: str) -> None:
     generated_font_paths.append(path)
 
 
-def _assert_no_features(fonts: list[TTFont], path: str, feature_tags: tuple[str, ...]) -> int:
-    """フォント群に削除対象の GSUB 機能が残っていないことを確認し、フェイス数を返す。"""
+def _square_glyphs(font: TTFont) -> set[str]:
+    """組文字 (CJK 互換文字) に対応するグリフ名を集める。"""
+    cmap = font.getBestCmap()
+    if not cmap:
+        return set()
+    return {
+        cmap[code]
+        for low, high in SQUARE_LIGATURE_RANGES
+        for code in range(low, high + 1)
+        if code in cmap
+    }
+
+
+#: 文脈依存 lookup (5 / 6 / 8) が置換を委譲するレコードの入れ物。fontTools の
+#: otTables で文書化されている属性名だけを使う (内部構造のリフレクション走査はしない)。
+_CONTEXT_RULE_SET_ATTRS = ("SubRuleSet", "SubClassSet", "ChainSubRuleSet", "ChainSubClassSet")
+_CONTEXT_RULE_ATTRS = ("SubRule", "SubClassRule", "ChainSubRule", "ChainSubClassRule")
+
+
+def _contextual_lookup_indices(table: object) -> list[int]:
+    """文脈依存 subtable が委譲する先の lookup 添字を集める。
+
+    文脈依存 lookup は置換を他の lookup へ委譲するため、参照先まで辿らないと合字の
+    置換先を見落とす。format 1/2 は規則集合 (SubRuleSet など)、format 3 は subtable
+    直下に SubstLookupRecord を持つ。
+    """
+    found: list[int] = []
+
+    def collect(records: Iterable[Any] | None) -> None:
+        for record in records or []:
+            index = getattr(record, "LookupListIndex", None)
+            if isinstance(index, int):
+                found.append(index)
+
+    collect(getattr(table, "SubstLookupRecord", None))
+    for set_attr in _CONTEXT_RULE_SET_ATTRS:
+        for rule_set in getattr(table, set_attr, None) or []:
+            if rule_set is None:
+                continue
+            for rule_attr in _CONTEXT_RULE_ATTRS:
+                for rule in getattr(rule_set, rule_attr, None) or []:
+                    collect(getattr(rule, "SubstLookupRecord", None))
+    return found
+
+
+def _live_ligature_targets(font: TTFont) -> dict[str, tuple[str, int]]:
+    """機能から参照される lookup が生成する合字グリフを、由来と共に集める。
+
+    起点は FeatureList の全機能 (ScriptList からの到達性では絞らない)。aalt / salt の
+    ように既定で無効な機能も、アプリが明示的に有効化すれば適用されるため、検証では
+    「適用され得る」と保守的にみなす。可変フォントの FeatureVariations が差し替える
+    機能も起点に含める。どの機能からも参照されない lookup だけは、どのシェーパも
+    適用しないため対象外とする (削除した 'dlig' が残した lookup を検出しない)。
+
+    Returns:
+        合字グリフ名 -> (由来の機能タグ, 生成した lookup の添字)
+    """
+    if "GSUB" not in font:
+        return {}
+
+    gsub = font["GSUB"].table
+    feature_list = getattr(gsub, "FeatureList", None)
+    if feature_list is None or not feature_list.FeatureRecord:
+        return {}
+
+    lookups = getattr(gsub, "LookupList", None)
+    if lookups is None or not lookups.Lookup:
+        return {}
+    lookup_list = lookups.Lookup
+
+    # lookup 添字 -> そこへ至る機能タグ (エラーメッセージで原因を特定できるようにする)
+    origin: dict[int, str] = {}
+    for record in feature_list.FeatureRecord:
+        for index in record.Feature.LookupListIndex:
+            origin.setdefault(index, record.FeatureTag)
+    feature_variations = getattr(gsub, "FeatureVariations", None)
+    if feature_variations is not None:
+        for variation in feature_variations.FeatureVariationRecord:
+            for substitution in variation.FeatureTableSubstitution.SubstitutionRecord:
+                for index in substitution.Feature.LookupListIndex:
+                    origin.setdefault(index, "FeatureVariations")
+
+    targets: dict[str, tuple[str, int]] = {}
+    pending = list(origin)
+    visited: set[int] = set()
+    while pending:
+        index = pending.pop()
+        if index in visited or not 0 <= index < len(lookup_list):
+            continue
+        visited.add(index)
+        tag = origin.get(index, "-")
+        for subtable in lookup_list[index].SubTable:
+            # Extension lookup (7) は実体の subtable を包む。
+            inner = getattr(subtable, "ExtSubTable", subtable)
+            for ligatures in getattr(inner, "ligatures", {}).values():
+                for ligature in ligatures:
+                    targets.setdefault(ligature.LigGlyph, (tag, index))
+            for referenced in _contextual_lookup_indices(inner):
+                origin.setdefault(referenced, tag)
+                pending.append(referenced)
+    return targets
+
+
+def _assert_no_unwanted_features(font: TTFont, path: str, feature_tags: tuple[str, ...]) -> None:
+    """削除対象の GSUB 機能タグが残っていないことを確認する。"""
+    if "GSUB" not in font:
+        return
+    feature_list = getattr(font["GSUB"].table, "FeatureList", None)
+    if feature_list is None or not feature_list.FeatureRecord:
+        return
+    tags = {record.FeatureTag for record in feature_list.FeatureRecord}
+    leftover = [tag for tag in feature_tags if tag in tags]
+    if leftover:
+        raise RuntimeError(f"{os.path.basename(path)} に GSUB 機能 {leftover} が残っています")
+
+
+def _assert_no_square_ligatures(font: TTFont, path: str) -> None:
+    """フォントが組文字へ潰れる合字を残していないことを確認する。"""
+    squares = _square_glyphs(font)
+    if not squares:
+        return
+    targets = _live_ligature_targets(font)
+    leftover = sorted(glyph for glyph in targets if glyph in squares)
+    if not leftover:
+        return
+    shown = ", ".join(
+        f"{glyph} ({targets[glyph][0]} lookup {targets[glyph][1]})" for glyph in leftover[:5]
+    )
+    suffix = f" ほか {len(leftover) - 5} 件" if len(leftover) > 5 else ""
+    raise RuntimeError(f"{os.path.basename(path)} に組文字への合字が残っています: {shown}{suffix}")
+
+
+def _verify_faces(fonts: list[TTFont], path: str, feature_tags: tuple[str, ...]) -> int:
+    """フォント群の GSUB を検証し、フェイス数を返す。"""
     for font in fonts:
-        if "GSUB" not in font:
-            continue
-        feature_list = getattr(font["GSUB"].table, "FeatureList", None)
-        if feature_list is None or not feature_list.FeatureRecord:
-            continue
-        tags = {record.FeatureTag for record in feature_list.FeatureRecord}
-        leftover = [tag for tag in feature_tags if tag in tags]
-        if leftover:
-            raise RuntimeError(f"{os.path.basename(path)} に GSUB 機能 {leftover} が残っています")
+        _assert_no_unwanted_features(font, path, feature_tags)
+        _assert_no_square_ligatures(font, path)
     return len(fonts)
 
 
-def verify_no_unwanted_gsub_features(paths: list[str], feature_tags: tuple[str, ...]) -> int:
-    """保存済みの生成物を読み直し、削除対象の GSUB 機能が残っていないことを確認する。
+def verify_no_square_ligatures(paths: list[str], feature_tags: tuple[str, ...]) -> int:
+    """保存済みの生成物を読み直し、意図しない GSUB 機能・合字が残っていないことを確認する。
 
-    削除処理が静かに効かなくなると (Noto 側の GSUB 構造の変化や保存時の取りこぼし)、
-    「プロ㌘」が再発する。生成物を検証して、残っていればビルドを失敗させる。
+    2 段階で見る。どちらか片方では穴が残るため両方必要。
+
+    1. 削除対象の機能タグ ('dlig') が残っていないこと (README の記述どおり削除されたか)
+    2. 機能から参照される合字の置換先が組文字 (U+3200-U+33FF) でないこと。タグ名に
+       依存しないため、Noto 側で合字が 'calt' など別タグへ移っても再発を検出できる。
 
     Args:
         paths: 検証するフォントファイル (.ttc / .ttf)
@@ -148,11 +281,16 @@ def verify_no_unwanted_gsub_features(paths: list[str], feature_tags: tuple[str, 
         # 生成と後始末を 1 か所にまとめ、読み込み途中で失敗しても開いたままにしない。
         if path.lower().endswith(".ttc"):
             with closing(TTCollection(path)) as collection:
-                checked += _assert_no_features(collection.fonts, path, feature_tags)
+                checked += _verify_faces(collection.fonts, path, feature_tags)
         else:
             with closing(TTFont(path)) as font:
-                checked += _assert_no_features([font], path, feature_tags)
+                checked += _verify_faces([font], path, feature_tags)
     return checked
+
+
+#: このブランチの前コミットで付けた公開名。外部スクリプトが import していても壊れない
+#: よう別名を残す (本体は verify_no_square_ligatures)。
+verify_no_unwanted_gsub_features = verify_no_square_ligatures
 
 
 def configure_font_metadata(
@@ -1122,8 +1260,11 @@ def main():
     # 検証に落ちたフォントが配布先へ流れないようにする。
     # 対象はこの実行で保存したフォントのみ (save_font が記録したパス)。
     # dist/ に残る過去ビルドの生成物や手動配置のファイルは対象外になる。
-    checked = verify_no_unwanted_gsub_features(generated_font_paths, UNWANTED_GSUB_FEATURES)
-    print(f"\n[check] GSUB 機能 {list(UNWANTED_GSUB_FEATURES)} を削除済み: {checked} フェイス")
+    # タグ名の不在だけでなく「組文字へ潰れる合字が適用され得るか」も見るので、
+    # Noto 側で合字が別タグへ移っても再発を検出できる。
+    tags = " / ".join(UNWANTED_GSUB_FEATURES)
+    checked = verify_no_square_ligatures(generated_font_paths, UNWANTED_GSUB_FEATURES)
+    print(f"\n[check] GSUB 機能 {tags} の不在と組文字合字なしを確認: {checked} フェイス")
 
     # 8. Sync generated fonts and bat scripts to C:\Temp if present
     temp_dir = r"C:\Temp"
